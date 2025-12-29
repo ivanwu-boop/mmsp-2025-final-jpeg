@@ -1,0 +1,84 @@
+name: MMSP JPEG Codec CI/CD
+
+# 觸發條件：當 push 到 main 分支時執行
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 下載你的程式碼
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 安裝編譯工具
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc make
+
+      # 3. 編譯程式 (相容模式：有 Makefile 用 make，沒有則直接 gcc)
+      - name: Compile Encoder and Decoder
+        run: |
+          if [ -f Makefile ]; then
+            echo "Makefile detected, running make..."
+            make clean 2>/dev/null || true
+            make
+          else
+            echo "No Makefile detected, compiling manually..."
+            # 假設 math library (-lm) 是必須的
+            gcc -o encoder encoder.c -lm
+            gcc -o decoder decoder.c -lm
+          fi
+          
+          # 檢查是否編譯成功
+          ls -l encoder decoder
+
+      # 4. 準備測試圖片 (Kimberly.bmp)
+      - name: Prepare Test Image
+        run: |
+          if [ -f "Kimberly.bmp" ]; then
+            echo "Kimberly.bmp found in repository."
+          else
+            echo "Kimberly.bmp not found! Attempting to download standard test image..."
+            # 這裡暫時使用你原本提供的備用連結，避免測試失敗
+            curl -L -o Kimberly.bmp "https://raw.githubusercontent.com/cychiang-ntpu/mmsp-2025-final-jpeg/main/Kimberly.bmp"
+          fi
+
+      # 5. 執行測試 (依序執行 Method 0, 1, 2, 3)
+      - name: Run JPEG Codec Pipeline
+        run: |
+          # 確保執行檔有權限
+          chmod +x encoder decoder
+          
+          echo "=== Method 0: Color Space Transformation ==="
+          ./encoder 0 Kimberly.bmp R.txt G.txt B.txt dim.txt
+          ./decoder 0 Res0.bmp R.txt G.txt B.txt dim.txt
+          
+          echo "=== Method 1: DCT & Quantization (Encoder) ==="
+          ./encoder 1 Kimberly.bmp Qt_Y.txt Qt_Cb.txt Qt_Cr.txt dim.txt qF_Y.raw qF_Cb.raw qF_Cr.raw eF_Y.raw eF_Cb.raw eF_Cr.raw
+          
+          echo "=== Method 2: IDCT & Dequantization (Decoder) ==="
+          ./decoder 2 Kimberly.bmp Rec.bmp Qt_Y.txt Qt_Cb.txt Qt_Cr.txt dim.txt qF_Y.raw qF_Cb.raw qF_Cr.raw
+          
+          echo "=== Method 3: DPCM & Huffman/RLE (Compression) ==="
+          ./encoder 3 Kimberly.bmp DC_Y.txt DC_Cb.txt DC_Cr.txt AC_Y.txt AC_Cb.txt AC_Cr.txt dim.txt
+
+      # 6. 【關鍵步驟】上傳 Artifacts (教授要的東西)
+      # 這會把所有生成的圖片和數據檔打包，讓你可以在 GitHub Actions 頁面下載
+      - name: Upload Results (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmsp-jpeg-results
+          path: |
+            *.bmp
+            *.txt
+            *.raw
+            !Kimberly.bmp
+          retention-days: 30
